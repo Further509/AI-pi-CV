@@ -863,41 +863,45 @@ class Classify(nn.Module):
 class ChannelAttention(nn.Module):
     def __init__(self, in_planes, ratio=16):
         super(ChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)  # 全局平均池化
+        self.max_pool = nn.AdaptiveMaxPool2d(1)  # 全局最大池化
 
-        self.f1 = nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False)
-        self.relu = nn.ReLU()
-        self.f2 = nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False)
-        # 写法二,亦可使用顺序容器
-        # self.sharedMLP = nn.Sequential(
-        # nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False), nn.ReLU(),
-        # nn.Conv2d(in_planes // rotio, in_planes, 1, bias=False))
-
-        self.sigmoid = nn.Sigmoid()
+        # 两个卷积层用于降低和恢复通道维度，实现通道注意力机制
+        self.f1 = nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False)  # 降维
+        self.relu = nn.ReLU()  # ReLU激活函数
+        self.f2 = nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False)  # 恢复维度
+        self.sigmoid = nn.Sigmoid()  # Sigmoid激活函数
 
     def forward(self, x):
+        # 全局平均和最大池化的特征图通过卷积层和激活函数处理
         avg_out = self.f2(self.relu(self.f1(self.avg_pool(x))))
         max_out = self.f2(self.relu(self.f1(self.max_pool(x))))
+        # 将两种注意力特征图相加，再通过sigmoid激活函数，得到通道注意力权重
         out = self.sigmoid(avg_out + max_out)
+        # 将权重乘以原始输入特征图，实现通道加权
         return torch.mul(x, out)
 
 
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
-
+        # 确保卷积核尺寸是3或7
         assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
-        padding = 3 if kernel_size == 7 else 1
+        padding = 3 if kernel_size == 7 else 1  # 计算padding
 
+        # 用于空间注意力的卷积层
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = nn.Sigmoid()  # Sigmoid激活函数
 
     def forward(self, x):
+        # 计算平均和最大特征图
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
+        # 将平均和最大特征图拼接
         out = torch.cat([avg_out, max_out], dim=1)
+        # 通过卷积层和sigmoid激活函数，得到空间注意力权重
         out = self.sigmoid(self.conv(out))
+        # 将权重乘以原始输入特征图，实现空间加权
         return torch.mul(x, out)
 
 
@@ -906,17 +910,19 @@ class CBAMC3(nn.Module):
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
         super(CBAMC3, self).__init__()
         c_ = int(c2 * e)  # hidden channels
+
+        # 定义CBAMC3模块中的卷积操作
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
         self.cv3 = Conv(2 * c_, c2, 1)
+        # 定义CBAMC3模块中的瓶颈模块
         self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        # 定义通道注意力和空间注意力模块
         self.channel_attention = ChannelAttention(c2, 16)
         self.spatial_attention = SpatialAttention(7)
 
-        # self.m = nn.Sequential(*[CrossConv(c_, c_, 3, 1, g, 1.0, shortcut) for _ in range(n)])
-
     def forward(self, x):
-        # 将最后的标准卷积模块改为了注意力机制提取特征
+        # 将输入特征图通过通道注意力和空间注意力模块进行特征增强
         return self.spatial_attention(
             self.channel_attention(self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))))
 
@@ -924,19 +930,51 @@ class CBAMC3(nn.Module):
 class SE(nn.Module):
     def __init__(self, c1, c2, ratio=16):
         super(SE, self).__init__()
-        # c*1*1
+        # SE模块的初始化方法
+        # c1: SE模块输入的通道数
+        # c2: SE模块输出的通道数
+        # ratio: 压缩比，用于定义全连接层的维度
+        
+        # 全局平均池化层，将特征图的每个通道压缩成一个数值
         self.avgpool = nn.AdaptiveAvgPool2d(1)
+        
+        # 第一个全连接层，用于降维
+        # c1 // ratio 表示降维后的通道数
         self.l1 = nn.Linear(c1, c1 // ratio, bias=False)
+        
+        # ReLU激活函数
         self.relu = nn.ReLU(inplace=True)
+        
+        # 第二个全连接层，用于恢复原来的维度
         self.l2 = nn.Linear(c1 // ratio, c1, bias=False)
+
+        # Sigmoid激活函数，用于生成每个通道的权重
         self.sig = nn.Sigmoid()
 
     def forward(self, x):
+        # SE模块的前向传播方法
+        # x: 输入的特征图，维度为(b, c, h, w)，其中b是批次大小，c是通道数，h和w是特征图的高度和宽度
+        
+        # 获取输入特征图的批次大小和通道数
         b, c, _, _ = x.size()
+        
+        # 通过全局平均池化层，将每个通道的特征图压缩成一个数值
         y = self.avgpool(x).view(b, c)
+        
+        # 通过第一个全连接层降维
         y = self.l1(y)
+        
+        # 通过ReLU激活函数
         y = self.relu(y)
+        
+        # 通过第二个全连接层恢复原来的维度
         y = self.l2(y)
+        
+        # 通过Sigmoid激活函数生成每个通道的权重
         y = self.sig(y)
+        
+        # 将权重调整为与输入特征图相同的维度，以便进行逐元素相乘
         y = y.view(b, c, 1, 1)
+        
+        # 将权重与输入特征图进行逐元素相乘，重新校准特征图的通道响应
         return x * y.expand_as(x)
