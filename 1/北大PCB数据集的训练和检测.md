@@ -69,7 +69,7 @@
              self.l2 = nn.Linear(c1 // ratio, c1, bias=False)
            
              # Sigmoid激活函数，用于生成每个通道的权重
-           self.sig = nn.Sigmoid()
+           	self.sig = nn.Sigmoid()
      
          def forward(self, x):
              # SE模块的前向传播方法
@@ -126,7 +126,7 @@
              return torch.mul(x, out)
      
      
-   # 空间注意力
+     # 空间注意力机制
      class SpatialAttention(nn.Module):
          def __init__(self, kernel_size=7):
              super(SpatialAttention, self).__init__()
@@ -140,7 +140,7 @@
      
          def forward(self, x):
              # 计算平均和最大特征图
-           avg_out = torch.mean(x, dim=1, keepdim=True)
+             avg_out = torch.mean(x, dim=1, keepdim=True)
              max_out, _ = torch.max(x, dim=1, keepdim=True)
              # 将平均和最大特征图拼接
              out = torch.cat([avg_out, max_out], dim=1)
@@ -171,10 +171,13 @@
              # 将输入特征图通过通道注意力和空间注意力模块进行特征增强
              return self.spatial_attention(
                  self.channel_attention(self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))))
+         
      ```
-     
-     在`yolo.py`中新增`SE`和`CBAMC3`模块
-     
+
+    
+
+   在`yolo.py`中新增`SE`和`CBAMC3`模块
+
      ```python
      if m in {
          Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
@@ -188,7 +191,7 @@
                  args.insert(2, n)  # number of repeats
                  n = 1
      ```
-     
+
      
 
 4. **训练模型**:
